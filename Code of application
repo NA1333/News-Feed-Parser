@@ -1,0 +1,100 @@
+import feedparser
+import spacy
+from sqlalchemy import create_engine, Column, String, Text, DateTime
+from sqlalchemy.orm import declarative_base, sessionmaker
+import logging
+
+# RSS Feeds list
+feeds = [
+    "http://rss.cnn.com/rss/cnn_topstories.rss",
+    "http://qz.com/feed",
+    "http://feeds.foxnews.com/foxnews/politics",
+    "http://feeds.reuters.com/reuters/businessNews",
+    "http://feeds.feedburner.com/NewshourWorld",
+    "https://feeds.bbci.co.uk/news/world/asia/india/rss.xml"
+]
+
+# MySQL connection details - replace with your actual MySQL username, password, and database name
+username = 'enter your mysql username'
+password = 'enter your password'
+host = 'localhost'
+database = 'newsdb'
+
+# SQLAlchemy engine to connect to MySQL
+engine = create_engine(f'mysql+pymysql://{username}:{password}@{host}/{database}')
+
+# Updated declarative_base import from sqlalchemy.orm
+Base = declarative_base()
+
+# Define the NewsArticle model that maps to the database
+class NewsArticle(Base):
+    __tablename__ = 'news_articles'
+
+    id = Column(String(255), primary_key=True)
+    title = Column(String(255), nullable=False)
+    content = Column(Text)
+    publication_date = Column(DateTime)
+    source_url = Column(String(255))
+    category = Column(String(255))
+
+# Create the table in the database if it doesn't exist already
+Base.metadata.create_all(engine)
+
+# Set up sessionmaker
+Session = sessionmaker(bind=engine)
+session = Session()
+
+# Load spaCy NLP model
+nlp = spacy.load("en_core_web_sm")
+
+# Logging setup
+logging.basicConfig(filename='app.log', level=logging.INFO)
+
+# Function to categorize articles
+def categorize_article(text):
+    doc = nlp(text)
+    if "terrorism" in text.lower() or "protest" in text.lower() or "riot" in text.lower():
+        return "Terrorism / Protest / Political Unrest / Riot"
+    elif "positive" in text.lower() or "uplifting" in text.lower():
+        return "Positive / Uplifting"
+    elif "disaster" in text.lower() or "flood" in text.lower() or "earthquake" in text.lower():
+        return "Natural Disasters"
+    return "Others"
+
+# Function to parse feeds and insert into the database
+def fetch_and_process_feeds():
+    for feed_url in feeds:
+        feed = feedparser.parse(feed_url)
+        for entry in feed.entries:
+            title = entry.title
+            content = entry.summary
+            publication_date = entry.published
+            source_url = entry.link
+
+            # Categorize the article
+            category = categorize_article(content)
+
+            # Check if the article already exists in the database
+            existing_article = session.query(NewsArticle).filter_by(id=source_url).first()
+            if not existing_article:
+                new_article = NewsArticle(
+                    id=source_url,
+                    title=title,
+                    content=content,
+                    publication_date=publication_date,
+                    source_url=source_url,
+                    category=category
+                )
+                session.add(new_article)
+                session.commit()
+                logging.info(f"Added new article: {title}")
+            else:
+                logging.info(f"Article already exists: {title}")
+
+# Error handling and execution
+if __name__ == "__main__":
+    try:
+        fetch_and_process_feeds()
+        print("Feed processing completed!")
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
